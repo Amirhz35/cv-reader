@@ -1,0 +1,205 @@
+services:
+  # Django API
+  app:
+    container_name: cv-screening-api
+    build: .
+    command: >
+      sh -c 'python manage.py wait_for_db && \
+             python manage.py create_minio_bucket && \
+             python manage.py runserver 0.0.0.0:8000'
+    volumes:
+      - .:/app
+      - ./media:/app/media
+    ports:
+      - "4500:8000"
+    environment:
+      DJANGO_SETTINGS_MODULE: cv_screening.settings
+      CONTAINER_NAME: cv-screening-api
+      MYSQL_HOST: mysql
+      MYSQL_DATABASE: cv_screening_auth
+      MYSQL_USER: admin
+      MYSQL_PASSWORD: 1234
+      MONGODB_HOST: mongodb
+      MONGODB_NAME: cv_screening_data
+      MONGODB_USER: admin
+      MONGODB_PASS: 1234
+      REDIS_HOST: redis
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+      AWS_S3_ENDPOINT_URL: http://minio:9000
+      MINIO_ACCESS_KEY: admin
+      MINIO_SECRET_KEY: admin123
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
+    depends_on:
+      mysql:
+        condition: service_healthy
+      mongodb:
+        condition: service_started
+      redis:
+        condition: service_started
+      minio:
+        condition: service_started
+
+  # Celery Worker
+  celery_worker:
+    container_name: cv-screening-celery-worker
+    build: .
+    command: celery -A cv_screening worker --loglevel=info
+    volumes:
+      - .:/app
+      - ./media:/app/media
+    environment:
+      DJANGO_SETTINGS_MODULE: cv_screening.settings
+      CONTAINER_NAME: cv-screening-celery-worker
+      MYSQL_HOST: mysql
+      MYSQL_DATABASE: cv_screening_auth
+      MYSQL_USER: admin
+      MYSQL_PASSWORD: 1234
+      MONGODB_HOST: mongodb
+      MONGODB_NAME: cv_screening_data
+      MONGODB_USER: admin
+      MONGODB_PASS: 1234
+      REDIS_HOST: redis
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+      AWS_S3_ENDPOINT_URL: http://minio:9000
+      MINIO_ACCESS_KEY: admin
+      MINIO_SECRET_KEY: admin123
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
+    depends_on:
+      - redis
+      - mysql
+      - mongodb
+      - minio
+
+  # Celery Beat for scheduled tasks
+  celery_beat:
+    container_name: cv-screening-celery-beat
+    build: .
+    command: celery -A cv_screening beat --loglevel=info
+    volumes:
+      - .:/app
+    environment:
+      DJANGO_SETTINGS_MODULE: cv_screening.settings
+      CONTAINER_NAME: cv-screening-celery-beat
+      MYSQL_HOST: mysql
+      MYSQL_DATABASE: cv_screening_auth
+      MYSQL_USER: admin
+      MYSQL_PASSWORD: 1234
+      MONGODB_HOST: mongodb
+      MONGODB_NAME: cv_screening_data
+      MONGODB_USER: admin
+      MONGODB_PASS: 1234
+      REDIS_HOST: redis
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+      AWS_S3_ENDPOINT_URL: http://minio:9000
+      MINIO_ACCESS_KEY: admin
+      MINIO_SECRET_KEY: admin123
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
+    depends_on:
+      - redis
+      - mysql
+      - mongodb
+      - minio
+
+  # Redis (Celery broker and result backend)
+  redis:
+    image: redis:7-alpine
+    container_name: cv-screening-redis
+    hostname: redis
+    restart: always
+    ports:
+      - "4501:6379"
+    volumes:
+      - redis_data:/data
+
+  # MySQL Database
+  mysql:
+    container_name: cv_screening_auth
+    restart: always
+    image: mysql:8.0
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ['CMD', "mysql", "-u", "admin", "--password=1234", "-e", "SELECT 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    environment:
+      MYSQL_ROOT_PASSWORD: 1234
+      MYSQL_USER: admin
+      MYSQL_PASSWORD: 1234
+      MYSQL_DATABASE: cv_screening_auth
+    ports:
+      - "4502:3306"
+    command: --default-authentication-plugin=mysql_native_password
+
+  # Adminer (Web GUI for MySQL)
+  adminer:
+    container_name: cv-screening-adminer
+    restart: always
+    image: adminer:latest
+    environment:
+      ADMINER_DEFAULT_SERVER: mysql
+      ADMINER_DESIGN: galkaev
+    ports:
+      - "4503:8080"
+    depends_on:
+      - mysql
+
+  # MongoDB Database
+  mongodb:
+    container_name: cv_screening_data
+    restart: always
+    image: mongo:7-jammy
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: 1234
+      MONGO_INITDB_DATABASE: cv_screening_data
+    ports:
+      - "4504:27017"
+    volumes:
+      - mongodb_data:/data/db
+
+  # Mongo Express (Web GUI for MongoDB)
+  mongo_express:
+    container_name: cv-screening-mongo-express
+    restart: always
+    image: mongo-express:latest
+    environment:
+      ME_CONFIG_OPTIONS_EDITORTHEME: default
+      ME_CONFIG_MONGODB_SERVER: mongodb
+      ME_CONFIG_MONGODB_ADMINUSERNAME: admin
+      ME_CONFIG_MONGODB_ADMINPASSWORD: 1234
+      ME_CONFIG_BASICAUTH_USERNAME: admin
+      ME_CONFIG_BASICAUTH_PASSWORD: 1234
+    ports:
+      - "4505:8081"
+    depends_on:
+      - mongodb
+
+  # MinIO for S3-compatible file storage
+  minio:
+    image: minio/minio
+    container_name: cv-screening-minio
+    ports:
+      - "4506:9000"
+      - "4507:9001"
+    environment:
+      MINIO_ROOT_USER: admin
+      MINIO_ROOT_PASSWORD: admin123
+    volumes:
+      - minio_data:/data
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:9000/minio/health/ready']
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+volumes:
+  redis_data:
+  mysql_data:
+  mongodb_data:
+  minio_data:
