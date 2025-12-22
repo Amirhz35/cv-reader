@@ -36,7 +36,7 @@ If you did not request this code, please ignore this email.
 Best regards,
 CV Screening Platform
 """
-            from_email = getattr(settings, 'DEFAULT_FROM_EMAIL', 'noreply@cvplatform.com')
+            from_email = getattr(settings, 'EMAIL_HOST_USER', 'noreply@cvplatform.com')
 
             send_mail(
                 subject=subject,
