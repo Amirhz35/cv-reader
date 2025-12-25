@@ -4,6 +4,7 @@ import structlog
 import time
 import json
 import os
+import re
 import requests
 from typing import Dict, Any, Optional
 from .circuit_breaker import ai_circuit_breaker, CircuitBreakerOpenException
@@ -20,7 +21,7 @@ class AIClient(ABC):
 
 
 class OpenRouterClient(AIClient):
-    def __init__(self, api_key: Optional[str] = None, model: str = "z-ai/glm-4.5-air:free", base_url: str = "https://openrouter.ai/api/v1"):
+    def __init__(self, api_key: Optional[str] = None, model: str = "google/gemini-2.5-flash-lite", base_url: str = "https://openrouter.ai/api/v1"):
         self.api_key = api_key or os.getenv('OPENROUTER_API_KEY')
         if not self.api_key:
             raise ValueError("OpenRouter API key not provided. Set OPENROUTER_API_KEY environment variable or pass api_key parameter.")
@@ -91,36 +92,42 @@ Please evaluate this CV against the job requirements."""
                 # Extract the AI response
                 ai_response = result['choices'][0]['message']['content'].strip()
 
+                usage = result.get('usage') if 'usage' in result else None
                 logger.info("OpenRouter AI response received",
                            response_length=len(ai_response),
-                           usage=result.get('usage', {}))
+                           usage=usage)
 
                 # Try to parse the JSON response
+                parsed_response = self._parse_ai_response(ai_response)
+                
+                if not parsed_response:
+                    raise Exception("AI returned invalid JSON response that could not be parsed")
+                
+                # Validate required fields - raise error if missing
+                if 'score' not in parsed_response:
+                    raise Exception("AI response missing required 'score' field")
+                if 'rationale' not in parsed_response:
+                    raise Exception("AI response missing required 'rationale' field")
+                if 'matches' not in parsed_response:
+                    raise Exception("AI response missing required 'matches' field")
+                if 'gaps' not in parsed_response:
+                    raise Exception("AI response missing required 'gaps' field")
+
+                # Ensure score is a float
                 try:
-                    parsed_response = json.loads(ai_response)
-                    # Validate required fields
-                    if 'score' not in parsed_response:
-                        parsed_response['score'] = 50.0
-                    if 'rationale' not in parsed_response:
-                        parsed_response['rationale'] = ai_response[:500]
-                    if 'matches' not in parsed_response:
-                        parsed_response['matches'] = []
-                    if 'gaps' not in parsed_response:
-                        parsed_response['gaps'] = []
+                    score_value = parsed_response['score']
+                    parsed_response['score'] = float(score_value)
+                    logger.info("Score extracted successfully", 
+                              original_score=score_value, 
+                              parsed_score=parsed_response['score'])
+                except (ValueError, TypeError) as e:
+                    raise Exception(f"AI response 'score' field is not a valid number: {score_value}")
 
-                    logger.info("OpenRouter AI evaluation completed",
-                               score=parsed_response['score'])
-                    return parsed_response
-
-                except json.JSONDecodeError:
-                    # If AI doesn't return valid JSON, create a structured response
-                    logger.warning("OpenRouter AI returned non-JSON response, creating fallback")
-                    return {
-                        'score': 60.0,
-                        'rationale': ai_response[:1000],
-                        'matches': self._extract_keywords(ai_response, ['experience', 'skills', 'knowledge']),
-                        'gaps': ['Unable to parse structured evaluation']
-                    }
+                logger.info("OpenRouter AI evaluation completed",
+                           score=parsed_response['score'],
+                           matches_count=len(parsed_response['matches']),
+                           gaps_count=len(parsed_response['gaps']))
+                return parsed_response
 
             except requests.exceptions.Timeout:
                 logger.error("OpenRouter API request timed out")
@@ -137,17 +144,90 @@ Please evaluate this CV against the job requirements."""
         try:
             return ai_circuit_breaker.call(_openrouter_evaluation)
         except CircuitBreakerOpenException:
-            logger.warning("OpenRouter service circuit breaker is open, returning fallback result")
-            return {
-                'score': 50.0,
-                'rationale': 'Service temporarily unavailable - circuit breaker activated',
-                'matches': [],
-                'gaps': ['Unable to evaluate due to service issues'],
-                'error': 'Circuit breaker open'
-            }
+            logger.error("OpenRouter service circuit breaker is open")
+            raise Exception("AI service temporarily unavailable - circuit breaker activated")
+
+    def _parse_ai_response(self, ai_response: str) -> Optional[Dict[str, Any]]:
+        """
+        Parse AI response, handling markdown code blocks and nested JSON.
+        
+        Args:
+            ai_response: Raw AI response string
+            
+        Returns:
+            Parsed JSON dict or None if parsing fails
+        """
+        # First, try to extract JSON from markdown code blocks
+        # Pattern: ```json\n{...}\n```
+        json_block_pattern = r'```(?:json)?\s*\n(.*?)\n```'
+        json_match = re.search(json_block_pattern, ai_response, re.DOTALL)
+        
+        if json_match:
+            json_str = json_match.group(1).strip()
+        else:
+            # Try to find JSON object in the response
+            # Look for { ... } pattern
+            json_object_pattern = r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}'
+            json_match = re.search(json_object_pattern, ai_response, re.DOTALL)
+            if json_match:
+                json_str = json_match.group(0).strip()
+            else:
+                json_str = ai_response.strip()
+        
+        # Try to parse the JSON
+        try:
+            parsed = json.loads(json_str)
+            
+            # Handle nested JSON in rationale field (if present)
+            # Sometimes AI returns the actual evaluation JSON nested inside rationale
+            if isinstance(parsed, dict) and 'rationale' in parsed:
+                rationale = parsed['rationale']
+                # Check if rationale contains nested JSON in markdown code block
+                if isinstance(rationale, str) and ('```json' in rationale or '```' in rationale):
+                    # Try to extract nested JSON from rationale
+                    nested_match = re.search(json_block_pattern, rationale, re.DOTALL)
+                    if nested_match:
+                        try:
+                            nested_json_str = nested_match.group(1).strip()
+                            nested_json = json.loads(nested_json_str)
+                            # If nested JSON has score and matches, use it (it's likely the actual response)
+                            if 'score' in nested_json and 'matches' in nested_json:
+                                logger.info("Found nested JSON in rationale with score and matches, using nested response",
+                                          nested_score=nested_json['score'])
+                                parsed = nested_json
+                            elif 'score' in nested_json:
+                                # Use nested score but keep other fields from outer response
+                                parsed['score'] = nested_json['score']
+                                if 'matches' in nested_json:
+                                    parsed['matches'] = nested_json['matches']
+                                if 'gaps' in nested_json:
+                                    parsed['gaps'] = nested_json['gaps']
+                                logger.info("Merged nested JSON data from rationale",
+                                          score=parsed['score'])
+                        except json.JSONDecodeError as e:
+                            logger.warning(f"Failed to parse nested JSON in rationale: {e}")
+                            pass
+            
+            return parsed
+        except json.JSONDecodeError as e:
+            logger.warning(f"Failed to parse JSON response: {e}")
+            # Try one more time with cleaned string (remove markdown artifacts)
+            try:
+                # Remove common markdown artifacts
+                cleaned = json_str.replace('```json', '').replace('```', '').strip()
+                # Remove leading/trailing non-JSON text
+                start_idx = cleaned.find('{')
+                end_idx = cleaned.rfind('}')
+                if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+                    cleaned = cleaned[start_idx:end_idx + 1]
+                    return json.loads(cleaned)
+            except (json.JSONDecodeError, ValueError):
+                pass
+            
+            return None
 
     def _extract_keywords(self, text: str, keywords: list) -> list:
-        """Simple keyword extraction for fallback responses"""
+        """Simple keyword extraction from text"""
         text_lower = text.lower()
         found_keywords = []
         for keyword in keywords:

@@ -10,7 +10,6 @@ import redis
 import django
 from django.conf import settings
 from django.utils import timezone
-from django.contrib.auth.hashers import make_password
 
 # Setup Django
 django.setup()
@@ -64,7 +63,7 @@ class OTPService:
         Args:
             username: User's username
             email: User's email
-            password: Raw password (will be hashed)
+            password: Raw password (will be hashed when user is created)
             first_name: User's first name
             last_name: User's last name
 
@@ -72,13 +71,11 @@ class OTPService:
             bool: True if stored successfully
         """
         try:
-            # Hash the password
-            hashed_password = make_password(password)
-
+            # Store raw password - it will be hashed when user is created
             data = {
                 'username': username,
                 'email': email.lower(),
-                'password_hash': hashed_password,
+                'password': password,  # Store raw password, not hashed
                 'first_name': first_name,
                 'last_name': last_name,
                 'created_at': timezone.now().isoformat()

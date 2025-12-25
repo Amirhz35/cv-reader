@@ -53,7 +53,7 @@ def evaluate_cv_task(self, evaluation_id):
                     temp_file.write(file_content)
                     temp_file_path = temp_file.name
             # Initialize OpenRouter AI client
-            ai_client = OpenRouterClient(model="z-ai/glm-4.5-air:free")
+            ai_client = OpenRouterClient(model="google/gemini-2.5-flash-lite")
             evaluation_service = CVEvaluationService(ai_client)
 
             result = evaluation_service.evaluate_cv(
@@ -71,18 +71,22 @@ def evaluate_cv_task(self, evaluation_id):
         # Update evaluation with results
         if 'error' in result and result['error']:
             # If the result contains an error, mark as failed
+            score = result['score'] if 'score' in result else None
             CVEvaluationRequest.objects(id=ObjectId(evaluation_id)).update_one(
                 set__status=CVEvaluationRequest.STATUS_FAILED,
                 set__ai_response=result,
-                set__score=result.get('score', 0.0),
+                set__score=score,
                 set__error_message=result['error']
             )
         else:
-            # Successful evaluation
+            # Successful evaluation - validate required fields
+            if 'score' not in result:
+                raise Exception("AI evaluation result missing 'score' field")
+            
             CVEvaluationRequest.objects(id=ObjectId(evaluation_id)).update_one(
                 set__status=CVEvaluationRequest.STATUS_COMPLETED,
                 set__ai_response=result,
-                set__score=result.get('score', 0.0),
+                set__score=result['score'],
                 set__error_message=None  # Clear any previous error messages
             )
 

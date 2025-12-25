@@ -287,7 +287,7 @@ class OTPVerifySerializer(serializers.Serializer):
         # Create the user account
         user = CustomUser.create_user(
             username=registration_data['username'],
-            password=registration_data['password_hash'],  # This is already hashed
+            password=registration_data['password'],  # Raw password - will be hashed by create_user
             email=registration_data['email'],
             first_name=registration_data['first_name'],
             last_name=registration_data['last_name']
@@ -342,5 +342,134 @@ class OTPResendSerializer(serializers.Serializer):
             raise ValidationException("email_send_failed", "Failed to send verification email")
 
         self._data = {'message': 'New OTP sent to your email'}
+        return True
+
+
+class ProfileGetSerializer(serializers.Serializer):
+    """Serializer for getting user profile data."""
+    id = serializers.IntegerField(read_only=True)
+    username = serializers.CharField(read_only=True)
+    email = serializers.EmailField(read_only=True)
+    first_name = serializers.CharField(read_only=True)
+    last_name = serializers.CharField(read_only=True)
+    date_joined = serializers.DateTimeField(read_only=True)
+    last_login = serializers.DateTimeField(read_only=True)
+
+    def to_representation(self, instance):
+        """Return user profile data."""
+        return {
+            'id': instance.id,
+            'username': instance.username,
+            'email': instance.email,
+            'first_name': instance.first_name,
+            'last_name': instance.last_name,
+            'date_joined': instance.date_joined,
+            'last_login': instance.last_login,
+        }
+
+
+class ProfileUpdateSerializer(serializers.Serializer):
+    """Serializer for updating user profile data."""
+    username = serializers.CharField(required=False)
+    email = serializers.EmailField(required=False)
+    first_name = serializers.CharField(required=False, allow_blank=True)
+    last_name = serializers.CharField(required=False, allow_blank=True)
+
+    def validate_username(self, value):
+        """Check if username is unique (excluding current user)."""
+        user = self.context.get('user')
+        if user and CustomUser.objects.filter(username=value).exclude(id=user.id).exists():
+            raise ValidationException("username_exists", "Username already exists")
+        return value
+
+    def validate_email(self, value):
+        """Check if email is unique (excluding current user)."""
+        user = self.context.get('user')
+        if user and CustomUser.objects.filter(email=value).exclude(id=user.id).exists():
+            raise ValidationException("email_exists", "Email already exists")
+        return value
+
+    def to_representation(self, instance):
+        """Return updated user profile data."""
+        return {
+            'id': instance.id,
+            'username': instance.username,
+            'email': instance.email,
+            'first_name': instance.first_name,
+            'last_name': instance.last_name,
+            'date_joined': instance.date_joined,
+            'last_login': instance.last_login,
+        }
+
+    def update(self, instance, validated_data):
+        """Update user profile."""
+        instance.username = validated_data.get('username', instance.username)
+        instance.email = validated_data.get('email', instance.email)
+        instance.first_name = validated_data.get('first_name', instance.first_name)
+        instance.last_name = validated_data.get('last_name', instance.last_name)
+        instance.save()
+        return instance
+
+
+class ProfileDeleteSerializer(serializers.Serializer):
+    """Serializer for account deletion confirmation."""
+    password = serializers.CharField(required=True, write_only=True, help_text="User password for confirmation")
+
+    def validate(self, attrs):
+        """Verify password before allowing deletion."""
+        user = self.context.get('user')
+        password = attrs['password']
+
+        if not user.check_password(password):
+            raise ValidationException("invalid_password", "Invalid password")
+
+        return attrs
+
+    def create(self, validated_data):
+        """Delete user account."""
+        user = self.context.get('user')
+        user_id = user.id
+        user.delete()
+
+        self._data = {'message': 'User account deleted successfully'}
+        return True
+
+
+class PasswordChangeSerializer(serializers.Serializer):
+    """Serializer for changing user password."""
+    old_password = serializers.CharField(required=True, write_only=True, help_text="Current password")
+    new_password = serializers.CharField(required=True, write_only=True, help_text="New password")
+    new_password_confirm = serializers.CharField(required=True, write_only=True, help_text="New password confirmation")
+
+    def validate(self, attrs):
+        """Validate password change."""
+        old_password = attrs['old_password']
+        new_password = attrs['new_password']
+        new_password_confirm = attrs['new_password_confirm']
+        user = self.context.get('user')
+
+        # Verify old password
+        if not user.check_password(old_password):
+            raise ValidationException("invalid_old_password", "Current password is incorrect")
+
+        # Check if new passwords match
+        if new_password != new_password_confirm:
+            raise ValidationException("password_mismatch", "New passwords don't match")
+
+        # Check if new password is different from old password
+        if user.check_password(new_password):
+            raise ValidationException("same_password", "New password must be different from current password")
+
+        return attrs
+
+    def create(self, validated_data):
+        """Change user password."""
+        user = self.context.get('user')
+        new_password = validated_data['new_password']
+        
+        user.set_password(new_password)
+        user.save()
+
+        self._data = {'message': 'Password changed successfully'}
         return True
 

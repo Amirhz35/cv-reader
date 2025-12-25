@@ -6,7 +6,9 @@ from django.urls import path
 from .views import (
     RegisterView, LoginView, TokenRefreshView,
     CVEvaluationView, CVEvaluationCreateView, CVFileView, HealthCheckView,
-    OTPVerifyView, OTPResendView
+    OTPVerifyView, OTPResendView,
+    ProfileGetView, ProfileUpdateView, ProfileDeleteView,
+    PasswordChangeView
 )
 
 app_name = 'app'
@@ -30,4 +32,10 @@ urlpatterns = [
 
     # Health check endpoint
     path('health/', HealthCheckView.as_view(), name='health-check'),
+
+    # Profile endpoints
+    path('profile/', ProfileGetView.as_view(), name='profile-get'),
+    path('profile/update/', ProfileUpdateView.as_view(), name='profile-update'),
+    path('profile/delete/', ProfileDeleteView.as_view(), name='profile-delete'),
+    path('profile/change-password/', PasswordChangeView.as_view(), name='password-change'),
 ]

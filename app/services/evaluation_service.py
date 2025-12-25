@@ -12,20 +12,9 @@ class CVEvaluationService:
         self.ai_client = ai_client
 
     def evaluate_cv(self, cv_file_path: str, prompt: str) -> Dict[str, Any]:
-        try:
-            cv_text = self.parser.extract_text(cv_file_path)
-            if not cv_text:
-                return {
-                    'error': 'Failed to extract text from CV',
-                    'score': 0.0
-                }
+        cv_text = self.parser.extract_text(cv_file_path)
+        if not cv_text:
+            raise Exception('Failed to extract text from CV')
 
-            result = self.ai_client.evaluate_cv(cv_text, prompt)
-            return result
-
-        except Exception as e:
-            logger.error(f"Error evaluating CV: {e}")
-            return {
-                'error': str(e),
-                'score': 0.0
-            }
+        result = self.ai_client.evaluate_cv(cv_text, prompt)
+        return result

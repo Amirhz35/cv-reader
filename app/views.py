@@ -11,7 +11,9 @@ from django.http import HttpResponse
 from .serializers import (
     UserSerializer, LoginSerializer, CVUploadSerializer,
     CVEvaluationSerializer, HealthCheckSerializer,
-    OTPVerifySerializer, OTPResendSerializer
+    OTPVerifySerializer, OTPResendSerializer,
+    ProfileGetSerializer, ProfileUpdateSerializer, ProfileDeleteSerializer,
+    PasswordChangeSerializer
 )
 from .models import CustomUser, CVUpload, CVEvaluationRequest
 
@@ -386,6 +388,159 @@ class OTPResendView(APIView):
     )
     def post(self, request):
         serializer = OTPResendSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(data=serializer.data, status=status.HTTP_200_OK)
+
+
+class ProfileGetView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        summary="Get User Profile",
+        description="Retrieve the authenticated user's profile information.",
+        responses={
+            200: OpenApiResponse(
+                description="Profile retrieved successfully",
+                response={
+                    'type': 'object',
+                    'properties': {
+                        'id': {'type': 'integer', 'description': 'User ID'},
+                        'username': {'type': 'string', 'description': 'Username'},
+                        'email': {'type': 'string', 'format': 'email', 'description': 'User email'},
+                        'first_name': {'type': 'string', 'description': 'First name'},
+                        'last_name': {'type': 'string', 'description': 'Last name'},
+                        'date_joined': {'type': 'string', 'format': 'date-time', 'description': 'Account creation date'},
+                        'last_login': {'type': 'string', 'format': 'date-time', 'description': 'Last login date'},
+                    }
+                }
+            ),
+            401: OpenApiResponse(description="Unauthorized - authentication required")
+        }
+    )
+    def get(self, request):
+        serializer = ProfileGetSerializer(instance=request.user, context={'user': request.user})
+        return Response(data=serializer.data, status=status.HTTP_200_OK)
+
+
+class ProfileUpdateView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        summary="Update User Profile",
+        description="Update the authenticated user's profile information. All fields are optional.",
+        request={
+            'application/json': {
+                'type': 'object',
+                'properties': {
+                    'username': {'type': 'string', 'description': 'Username'},
+                    'email': {'type': 'string', 'format': 'email', 'description': 'User email address'},
+                    'first_name': {'type': 'string', 'description': 'User first name'},
+                    'last_name': {'type': 'string', 'description': 'User last name'},
+                }
+            }
+        },
+        responses={
+            200: OpenApiResponse(
+                description="Profile updated successfully",
+                response={
+                    'type': 'object',
+                    'properties': {
+                        'id': {'type': 'integer', 'description': 'User ID'},
+                        'username': {'type': 'string', 'description': 'Username'},
+                        'email': {'type': 'string', 'format': 'email', 'description': 'User email'},
+                        'first_name': {'type': 'string', 'description': 'First name'},
+                        'last_name': {'type': 'string', 'description': 'Last name'},
+                        'date_joined': {'type': 'string', 'format': 'date-time', 'description': 'Account creation date'},
+                        'last_login': {'type': 'string', 'format': 'date-time', 'description': 'Last login date'},
+                    }
+                }
+            ),
+            400: OpenApiResponse(description="Validation error"),
+            401: OpenApiResponse(description="Unauthorized - authentication required")
+        }
+    )
+    def post(self, request):
+        serializer = ProfileUpdateSerializer(
+            instance=request.user,
+            data=request.data,
+            context={'user': request.user},
+            partial=True
+        )
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(data=serializer.data, status=status.HTTP_200_OK)
+
+
+class ProfileDeleteView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        summary="Delete User Account",
+        description="Delete the authenticated user's account. Requires password confirmation for security.",
+        request={
+            'application/json': {
+                'type': 'object',
+                'properties': {
+                    'password': {'type': 'string', 'format': 'password', 'description': 'User password for confirmation'},
+                },
+                'required': ['password']
+            }
+        },
+        responses={
+            200: OpenApiResponse(
+                description="Account deleted successfully",
+                response={
+                    'type': 'object',
+                    'properties': {
+                        'message': {'type': 'string', 'description': 'Success message'},
+                    }
+                }
+            ),
+            400: OpenApiResponse(description="Validation error - invalid password"),
+            401: OpenApiResponse(description="Unauthorized - authentication required")
+        }
+    )
+    def post(self, request):
+        serializer = ProfileDeleteSerializer(data=request.data, context={'user': request.user})
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(data=serializer.data, status=status.HTTP_200_OK)
+
+
+class PasswordChangeView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        summary="Change User Password",
+        description="Change the authenticated user's password. Requires current password for verification.",
+        request={
+            'application/json': {
+                'type': 'object',
+                'properties': {
+                    'old_password': {'type': 'string', 'format': 'password', 'description': 'Current password'},
+                    'new_password': {'type': 'string', 'format': 'password', 'description': 'New password'},
+                    'new_password_confirm': {'type': 'string', 'format': 'password', 'description': 'New password confirmation'},
+                },
+                'required': ['old_password', 'new_password', 'new_password_confirm']
+            }
+        },
+        responses={
+            200: OpenApiResponse(
+                description="Password changed successfully",
+                response={
+                    'type': 'object',
+                    'properties': {
+                        'message': {'type': 'string', 'description': 'Success message'},
+                    }
+                }
+            ),
+            400: OpenApiResponse(description="Validation error - invalid current password, passwords don't match, or new password same as old"),
+            401: OpenApiResponse(description="Unauthorized - authentication required")
+        }
+    )
+    def post(self, request):
+        serializer = PasswordChangeSerializer(data=request.data, context={'user': request.user})
         serializer.is_valid(raise_exception=True)
         serializer.save()
         return Response(data=serializer.data, status=status.HTTP_200_OK)
