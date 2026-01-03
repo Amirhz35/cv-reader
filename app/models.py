@@ -12,6 +12,7 @@ class CustomUser(AbstractUser):
     email = models.EmailField(max_length=150, blank=True, null=True)
     first_name = models.CharField(max_length=100, blank=True, null=True)
     last_name = models.CharField(max_length=100, blank=True, null=True)
+    job_position = models.CharField(max_length=200, blank=True, null=True)
     date_joined = models.DateTimeField(auto_now_add=True)
     last_login = models.DateTimeField(auto_now=True)
 
@@ -33,7 +34,7 @@ class CustomUser(AbstractUser):
         return super().check_password(raw_password)
 
     @classmethod
-    def create_user(cls, username, password, email=None, first_name=None, last_name=None):
+    def create_user(cls, username, password, email=None, first_name=None, last_name=None, job_position=None):
         user = cls(username=username)
         if email:
             user.email = email
@@ -41,6 +42,8 @@ class CustomUser(AbstractUser):
             user.first_name = first_name
         if last_name:
             user.last_name = last_name
+        if job_position:
+            user.job_position = job_position
         user.set_password(password)
         user.save()
         return user

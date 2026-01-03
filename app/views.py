@@ -33,6 +33,7 @@ class RegisterView(APIView):
                     'email': {'type': 'string', 'format': 'email', 'description': 'User email address'},
                     'first_name': {'type': 'string', 'description': 'User first name'},
                     'last_name': {'type': 'string', 'description': 'User last name'},
+                    'job_position': {'type': 'string', 'description': 'User job position', 'nullable': True},
                     'password': {'type': 'string', 'format': 'password', 'description': 'User password'},
                     'password_confirm': {'type': 'string', 'format': 'password', 'description': 'Password confirmation'},
                 },
@@ -90,6 +91,7 @@ class LoginView(APIView):
                                 'email': {'type': 'string', 'format': 'email', 'description': 'User email'},
                                 'first_name': {'type': 'string', 'description': 'First name'},
                                 'last_name': {'type': 'string', 'description': 'Last name'},
+                                'job_position': {'type': 'string', 'description': 'Job position', 'nullable': True},
                             }
                         },
                         'tokens': {
@@ -335,6 +337,7 @@ class OTPVerifyView(APIView):
                                 'email': {'type': 'string', 'format': 'email', 'description': 'User email'},
                                 'first_name': {'type': 'string', 'description': 'First name'},
                                 'last_name': {'type': 'string', 'description': 'Last name'},
+                                'job_position': {'type': 'string', 'description': 'Job position', 'nullable': True},
                             }
                         },
                         'tokens': {
@@ -410,6 +413,7 @@ class ProfileGetView(APIView):
                         'email': {'type': 'string', 'format': 'email', 'description': 'User email'},
                         'first_name': {'type': 'string', 'description': 'First name'},
                         'last_name': {'type': 'string', 'description': 'Last name'},
+                        'job_position': {'type': 'string', 'description': 'Job position', 'nullable': True},
                         'date_joined': {'type': 'string', 'format': 'date-time', 'description': 'Account creation date'},
                         'last_login': {'type': 'string', 'format': 'date-time', 'description': 'Last login date'},
                     }
@@ -437,6 +441,7 @@ class ProfileUpdateView(APIView):
                     'email': {'type': 'string', 'format': 'email', 'description': 'User email address'},
                     'first_name': {'type': 'string', 'description': 'User first name'},
                     'last_name': {'type': 'string', 'description': 'User last name'},
+                    'job_position': {'type': 'string', 'description': 'User job position', 'nullable': True},
                 }
             }
         },
@@ -451,6 +456,7 @@ class ProfileUpdateView(APIView):
                         'email': {'type': 'string', 'format': 'email', 'description': 'User email'},
                         'first_name': {'type': 'string', 'description': 'First name'},
                         'last_name': {'type': 'string', 'description': 'Last name'},
+                        'job_position': {'type': 'string', 'description': 'Job position', 'nullable': True},
                         'date_joined': {'type': 'string', 'format': 'date-time', 'description': 'Account creation date'},
                         'last_login': {'type': 'string', 'format': 'date-time', 'description': 'Last login date'},
                     }

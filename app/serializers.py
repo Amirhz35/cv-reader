@@ -19,6 +19,7 @@ class UserSerializer(serializers.Serializer):
     email = serializers.CharField(required=True)
     first_name = serializers.CharField(required=True)
     last_name = serializers.CharField(required=True)
+    job_position = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     password = serializers.CharField(required=True, write_only=True)
     password_confirm = serializers.CharField(required=True, write_only=True)
 
@@ -45,9 +46,10 @@ class UserSerializer(serializers.Serializer):
         password = validated_data['password']
         first_name = validated_data['first_name']
         last_name = validated_data['last_name']
+        job_position = validated_data.get('job_position', '')
 
         # Store pending registration in Redis
-        if not otp_service.store_pending_registration(username, email, password, first_name, last_name):
+        if not otp_service.store_pending_registration(username, email, password, first_name, last_name, job_position):
             raise ValidationException("registration_failed", "Failed to initiate registration")
 
         # Generate and store OTP
@@ -102,6 +104,7 @@ class LoginSerializer(serializers.Serializer):
                 'email': user.email,
                 'first_name': user.first_name,
                 'last_name': user.last_name,
+                'job_position': user.job_position,
             },
             'tokens': {
                 'refresh': str(refresh),
@@ -290,7 +293,8 @@ class OTPVerifySerializer(serializers.Serializer):
             password=registration_data['password'],  # Raw password - will be hashed by create_user
             email=registration_data['email'],
             first_name=registration_data['first_name'],
-            last_name=registration_data['last_name']
+            last_name=registration_data['last_name'],
+            job_position=registration_data.get('job_position', '')
         )
 
         # Issue JWT tokens
@@ -303,6 +307,7 @@ class OTPVerifySerializer(serializers.Serializer):
                 'email': user.email,
                 'first_name': user.first_name,
                 'last_name': user.last_name,
+                'job_position': user.job_position,
             },
             'tokens': {
                 'refresh': str(refresh),
@@ -352,6 +357,7 @@ class ProfileGetSerializer(serializers.Serializer):
     email = serializers.EmailField(read_only=True)
     first_name = serializers.CharField(read_only=True)
     last_name = serializers.CharField(read_only=True)
+    job_position = serializers.CharField(read_only=True)
     date_joined = serializers.DateTimeField(read_only=True)
     last_login = serializers.DateTimeField(read_only=True)
 
@@ -363,6 +369,7 @@ class ProfileGetSerializer(serializers.Serializer):
             'email': instance.email,
             'first_name': instance.first_name,
             'last_name': instance.last_name,
+            'job_position': instance.job_position,
             'date_joined': instance.date_joined,
             'last_login': instance.last_login,
         }
@@ -374,6 +381,7 @@ class ProfileUpdateSerializer(serializers.Serializer):
     email = serializers.EmailField(required=False)
     first_name = serializers.CharField(required=False, allow_blank=True)
     last_name = serializers.CharField(required=False, allow_blank=True)
+    job_position = serializers.CharField(required=False, allow_blank=True, allow_null=True)
 
     def validate_username(self, value):
         """Check if username is unique (excluding current user)."""
@@ -397,6 +405,7 @@ class ProfileUpdateSerializer(serializers.Serializer):
             'email': instance.email,
             'first_name': instance.first_name,
             'last_name': instance.last_name,
+            'job_position': instance.job_position,
             'date_joined': instance.date_joined,
             'last_login': instance.last_login,
         }
@@ -407,6 +416,7 @@ class ProfileUpdateSerializer(serializers.Serializer):
         instance.email = validated_data.get('email', instance.email)
         instance.first_name = validated_data.get('first_name', instance.first_name)
         instance.last_name = validated_data.get('last_name', instance.last_name)
+        instance.job_position = validated_data.get('job_position', instance.job_position)
         instance.save()
         return instance
 

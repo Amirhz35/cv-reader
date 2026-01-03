@@ -56,7 +56,7 @@ class OTPService:
         return ''.join(random.choices(string.digits, k=6))
 
     def store_pending_registration(self, username: str, email: str, password: str,
-                                   first_name: str, last_name: str) -> bool:
+                                   first_name: str, last_name: str, job_position: str = '') -> bool:
         """
         Store pending registration data in Redis.
 
@@ -66,6 +66,7 @@ class OTPService:
             password: Raw password (will be hashed when user is created)
             first_name: User's first name
             last_name: User's last name
+            job_position: User's job position
 
         Returns:
             bool: True if stored successfully
@@ -78,6 +79,7 @@ class OTPService:
                 'password': password,  # Store raw password, not hashed
                 'first_name': first_name,
                 'last_name': last_name,
+                'job_position': job_position,
                 'created_at': timezone.now().isoformat()
             }
 
