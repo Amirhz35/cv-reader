@@ -8,7 +8,8 @@ from .views import (
     CVEvaluationView, CVEvaluationCreateView, CVFileView, HealthCheckView,
     OTPVerifyView, OTPResendView,
     ProfileGetView, ProfileUpdateView, ProfileDeleteView,
-    PasswordChangeView
+    PasswordChangeView, PasswordResetRequestView, PasswordResetVerifyView,
+    PasswordResetResendView
 )
 
 app_name = 'app'
@@ -22,6 +23,11 @@ urlpatterns = [
     # OTP verification endpoints
     path('auth/otp/verify/', OTPVerifyView.as_view(), name='otp_verify'),
     path('auth/otp/resend/', OTPResendView.as_view(), name='otp_resend'),
+
+    # Password reset endpoints
+    path('auth/password-reset/request/', PasswordResetRequestView.as_view(), name='password-reset-request'),
+    path('auth/password-reset/verify/', PasswordResetVerifyView.as_view(), name='password-reset-verify'),
+    path('auth/password-reset/resend/', PasswordResetResendView.as_view(), name='password-reset-resend'),
 
     # CV file download endpoint
     path('cv-files/<str:file_id>/', CVFileView.as_view(), name='cv-file-download'),

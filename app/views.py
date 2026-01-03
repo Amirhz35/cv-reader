@@ -13,7 +13,8 @@ from .serializers import (
     CVEvaluationSerializer, HealthCheckSerializer,
     OTPVerifySerializer, OTPResendSerializer,
     ProfileGetSerializer, ProfileUpdateSerializer, ProfileDeleteSerializer,
-    PasswordChangeSerializer
+    PasswordChangeSerializer, PasswordResetRequestSerializer,
+    PasswordResetVerifySerializer, PasswordResetResendSerializer
 )
 from .models import CustomUser, CVUpload, CVEvaluationRequest
 
@@ -547,6 +548,116 @@ class PasswordChangeView(APIView):
     )
     def post(self, request):
         serializer = PasswordChangeSerializer(data=request.data, context={'user': request.user})
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(data=serializer.data, status=status.HTTP_200_OK)
+
+
+class PasswordResetRequestView(APIView):
+    permission_classes = [AllowAny]
+
+    @extend_schema(
+        summary="Request Password Reset",
+        description="Request a password reset by providing your email address. An OTP code will be sent to your email.",
+        request={
+            'application/json': {
+                'type': 'object',
+                'properties': {
+                    'email': {'type': 'string', 'format': 'email', 'description': 'User email address'},
+                },
+                'required': ['email']
+            }
+        },
+        responses={
+            200: OpenApiResponse(
+                description="Password reset OTP sent successfully",
+                response={
+                    'type': 'object',
+                    'properties': {
+                        'email': {'type': 'string', 'format': 'email', 'description': 'User email'},
+                        'message': {'type': 'string', 'description': 'Success message'},
+                    }
+                }
+            ),
+            400: OpenApiResponse(description="Validation error - email not found or OTP generation failed")
+        }
+    )
+    def post(self, request):
+        serializer = PasswordResetRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(data=serializer.data, status=status.HTTP_200_OK)
+
+
+class PasswordResetVerifyView(APIView):
+    permission_classes = [AllowAny]
+
+    @extend_schema(
+        summary="Verify Password Reset OTP and Reset Password",
+        description="Verify the OTP code sent to your email and set a new password. OTP codes are 6 digits, expire after 2 minutes, and allow maximum 5 verification attempts.",
+        request={
+            'application/json': {
+                'type': 'object',
+                'properties': {
+                    'email': {'type': 'string', 'format': 'email', 'description': 'User email address'},
+                    'code': {'type': 'string', 'minLength': 6, 'maxLength': 6, 'description': '6-digit OTP code'},
+                    'new_password': {'type': 'string', 'format': 'password', 'description': 'New password'},
+                    'new_password_confirm': {'type': 'string', 'format': 'password', 'description': 'New password confirmation'},
+                },
+                'required': ['email', 'code', 'new_password', 'new_password_confirm']
+            }
+        },
+        responses={
+            200: OpenApiResponse(
+                description="Password reset successfully",
+                response={
+                    'type': 'object',
+                    'properties': {
+                        'message': {'type': 'string', 'description': 'Success message'},
+                    }
+                }
+            ),
+            400: OpenApiResponse(description="Validation error - invalid OTP, passwords don't match, or password reset request expired")
+        }
+    )
+    def post(self, request):
+        serializer = PasswordResetVerifySerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(data=serializer.data, status=status.HTTP_200_OK)
+
+
+class PasswordResetResendView(APIView):
+    permission_classes = [AllowAny]
+
+    @extend_schema(
+        summary="Resend Password Reset OTP",
+        description="Request a new password reset OTP code. Rate limited to 1 request per minute. Only works if there's a pending password reset for the email.",
+        request={
+            'application/json': {
+                'type': 'object',
+                'properties': {
+                    'email': {'type': 'string', 'format': 'email', 'description': 'User email address'},
+                },
+                'required': ['email']
+            }
+        },
+        responses={
+            200: OpenApiResponse(
+                description="New password reset OTP sent successfully",
+                response={
+                    'type': 'object',
+                    'properties': {
+                        'message': {'type': 'string', 'description': 'Success message'},
+                    }
+                }
+            ),
+            400: OpenApiResponse(description="No pending password reset found for this email"),
+            429: OpenApiResponse(description="Rate limited - please wait before requesting another OTP")
+        }
+    )
+    def post(self, request):
+        serializer = PasswordResetResendSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         serializer.save()
         return Response(data=serializer.data, status=status.HTTP_200_OK)

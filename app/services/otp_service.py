@@ -51,6 +51,14 @@ class OTPService:
         """Get Redis key for OTP data."""
         return f"otp:{email.lower()}"
 
+    def _get_password_reset_otp_key(self, email: str) -> str:
+        """Get Redis key for password reset OTP data."""
+        return f"password_reset_otp:{email.lower()}"
+
+    def _get_pending_password_reset_key(self, email: str) -> str:
+        """Get Redis key for pending password reset."""
+        return f"pending_password_reset:{email.lower()}"
+
     def generate_otp_code(self) -> str:
         """Generate a 6-digit random OTP code."""
         return ''.join(random.choices(string.digits, k=6))
@@ -252,6 +260,180 @@ class OTPService:
         try:
             pending_key = self._get_pending_registration_key(email)
             otp_key = self._get_otp_key(email)
+            self.redis.delete(pending_key, otp_key)
+        except Exception:
+            pass
+
+    def store_pending_password_reset(self, email: str, new_password: str) -> bool:
+        """
+        Store pending password reset data in Redis.
+
+        Args:
+            email: User's email
+            new_password: New password (will be hashed when password is reset)
+
+        Returns:
+            bool: True if stored successfully
+        """
+        try:
+            data = {
+                'email': email.lower(),
+                'new_password': new_password,  # Store raw password, will be hashed when reset
+                'created_at': timezone.now().isoformat()
+            }
+
+            key = self._get_pending_password_reset_key(email)
+            # Store for 5 minutes (2 minutes OTP expiry + 3 minutes buffer)
+            self.redis.setex(key, 300, json.dumps(data))
+            return True
+        except Exception:
+            return False
+
+    def get_pending_password_reset(self, email: str) -> Optional[Dict]:
+        """
+        Retrieve pending password reset data.
+
+        Args:
+            email: User's email
+
+        Returns:
+            Dict with password reset data or None if not found
+        """
+        try:
+            key = self._get_pending_password_reset_key(email)
+            data = self.redis.get(key)
+            if data:
+                return json.loads(data)
+            return None
+        except Exception:
+            return None
+
+    def create_password_reset_otp(self, email: str) -> Optional[str]:
+        """
+        Create and store OTP for password reset.
+
+        Args:
+            email: User's email
+
+        Returns:
+            str: Generated OTP code or None if failed
+        """
+        try:
+            # Check if there's already an active OTP and if it can be resent
+            existing_otp_data = self.get_password_reset_otp_data(email)
+            if existing_otp_data and not self.can_resend_otp(existing_otp_data):
+                return None
+
+            code = self.generate_otp_code()
+            expires_at = timezone.now() + timedelta(minutes=2)
+
+            otp_data = {
+                'code': code,
+                'expires_at': expires_at.isoformat(),
+                'attempts_left': 5,
+                'last_sent_at': timezone.now().isoformat()
+            }
+
+            key = self._get_password_reset_otp_key(email)
+            # Store for 2 minutes (OTP expiry time)
+            self.redis.setex(key, 120, json.dumps(otp_data))
+            return code
+        except Exception:
+            return None
+
+    def get_password_reset_otp_data(self, email: str) -> Optional[Dict]:
+        """
+        Get password reset OTP data for email.
+
+        Args:
+            email: User's email
+
+        Returns:
+            Dict with OTP data or None if not found
+        """
+        try:
+            key = self._get_password_reset_otp_key(email)
+            data = self.redis.get(key)
+            if data:
+                return json.loads(data)
+            return None
+        except Exception:
+            return None
+
+    def verify_password_reset_otp(self, email: str, code: str) -> Tuple[bool, str]:
+        """
+        Verify password reset OTP code.
+
+        Args:
+            email: User's email
+            code: OTP code to verify
+
+        Returns:
+            Tuple[bool, str]: (success, message)
+        """
+        try:
+            otp_data = self.get_password_reset_otp_data(email)
+            if not otp_data:
+                return False, "OTP not found or expired"
+
+            # Check expiry
+            expires_at = datetime.fromisoformat(otp_data['expires_at'])
+            if timezone.now() > expires_at:
+                return False, "OTP has expired"
+
+            # Check attempts
+            if otp_data['attempts_left'] <= 0:
+                return False, "Too many failed attempts"
+
+            # Check code
+            if otp_data['code'] != code:
+                # Decrement attempts
+                otp_data['attempts_left'] -= 1
+                key = self._get_password_reset_otp_key(email)
+                self.redis.setex(key, 120, json.dumps(otp_data))
+                return False, f"Invalid OTP. {otp_data['attempts_left']} attempts remaining"
+
+            return True, "OTP verified successfully"
+
+        except Exception as e:
+            return False, f"Verification error: {str(e)}"
+
+    def complete_password_reset(self, email: str) -> Optional[Dict]:
+        """
+        Complete password reset by retrieving and clearing pending data.
+
+        Args:
+            email: User's email
+
+        Returns:
+            Dict with password reset data or None if not found
+        """
+        try:
+            # Get pending password reset data
+            reset_data = self.get_pending_password_reset(email)
+            if not reset_data:
+                return None
+
+            # Clear both pending password reset and OTP data
+            pending_key = self._get_pending_password_reset_key(email)
+            otp_key = self._get_password_reset_otp_key(email)
+
+            self.redis.delete(pending_key, otp_key)
+
+            return reset_data
+        except Exception:
+            return None
+
+    def cleanup_password_reset_data(self, email: str):
+        """
+        Clean up expired password reset and OTP data.
+
+        Args:
+            email: User's email
+        """
+        try:
+            pending_key = self._get_pending_password_reset_key(email)
+            otp_key = self._get_password_reset_otp_key(email)
             self.redis.delete(pending_key, otp_key)
         except Exception:
             pass

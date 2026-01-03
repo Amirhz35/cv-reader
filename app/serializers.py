@@ -483,3 +483,144 @@ class PasswordChangeSerializer(serializers.Serializer):
         self._data = {'message': 'Password changed successfully'}
         return True
 
+
+class PasswordResetRequestSerializer(serializers.Serializer):
+    """Serializer for requesting password reset."""
+    email = serializers.EmailField(required=True)
+
+    def validate_email(self, value):
+        """Check if email exists in the system."""
+        if not CustomUser.objects.filter(email=value.lower()).exists():
+            raise ValidationException("email_not_found", "No account found with this email address")
+        return value.lower()
+
+    def create(self, validated_data):
+        """Initiate password reset by sending OTP."""
+        from .services.otp_service import otp_service
+        from .services.email_service import email_service
+
+        email = validated_data['email']
+
+        # Generate and store OTP
+        otp_code = otp_service.create_password_reset_otp(email)
+        if not otp_code:
+            raise ValidationException("otp_generation_failed", "Failed to generate OTP. Please try again in a minute.")
+
+        # Send OTP email
+        if not email_service.send_password_reset_otp_email(email, otp_code):
+            # Clean up on email failure
+            otp_service.cleanup_password_reset_data(email)
+            raise ValidationException("email_send_failed", "Failed to send password reset email")
+
+        self._data = {
+            'email': email,
+            'message': 'Password reset OTP sent to your email. Please check your inbox.'
+        }
+        return True
+
+
+class PasswordResetVerifySerializer(serializers.Serializer):
+    """Serializer for verifying password reset OTP and resetting password."""
+    email = serializers.EmailField(required=True)
+    code = serializers.CharField(
+        required=True,
+        min_length=6,
+        max_length=6,
+        help_text="6-digit OTP code"
+    )
+    new_password = serializers.CharField(required=True, write_only=True)
+    new_password_confirm = serializers.CharField(required=True, write_only=True)
+
+    def validate_code(self, value):
+        """Validate OTP code format."""
+        if not value.isdigit():
+            raise serializers.ValidationError("OTP code must contain only digits")
+        return value
+
+    def validate(self, attrs):
+        """Validate password reset data."""
+        new_password = attrs['new_password']
+        new_password_confirm = attrs['new_password_confirm']
+
+        # Check if passwords match
+        if new_password != new_password_confirm:
+            raise ValidationException("password_mismatch", "Passwords don't match")
+
+        # Verify OTP code
+        email = attrs['email']
+        success, message = otp_service.verify_password_reset_otp(email, attrs['code'])
+
+        if not success:
+            raise ValidationException("otp_verification_failed", message)
+
+        return attrs
+
+    def create(self, validated_data):
+        """Complete password reset."""
+        email = validated_data['email']
+        new_password = validated_data['new_password']
+
+        # OTP was already verified in validate()
+        # Get user and update password
+        try:
+            user = CustomUser.objects.get(email=email)
+        except CustomUser.DoesNotExist:
+            raise ValidationException("user_not_found", "User not found")
+
+        # Check if new password is different from current password
+        if user.check_password(new_password):
+            raise ValidationException("same_password", "New password must be different from current password")
+
+        # Update user password
+        user.set_password(new_password)
+        user.save()
+
+        # Clean up OTP data (no need for pending reset data since we don't store password)
+        otp_service.cleanup_password_reset_data(email)
+
+        self._data = {'message': 'Password reset successfully'}
+        return True
+
+
+class PasswordResetResendSerializer(serializers.Serializer):
+    """Serializer for resending password reset OTP."""
+    email = serializers.EmailField(required=True)
+
+    def validate_email(self, value):
+        """Check if email exists and has pending password reset."""
+        if not CustomUser.objects.filter(email=value.lower()).exists():
+            raise ValidationException("email_not_found", "No account found with this email address")
+        return value.lower()
+
+    def create(self, validated_data):
+        """Resend password reset OTP."""
+        from .services.otp_service import otp_service
+        from .services.email_service import email_service
+
+        email = validated_data['email']
+
+        # Check if there's an active OTP
+        otp_data = otp_service.get_password_reset_otp_data(email)
+        
+        # If no OTP exists, user needs to request password reset first
+        if not otp_data:
+            raise ValidationException("no_pending_reset", "No pending password reset found for this email. Please request a password reset first.")
+
+        # Check OTP data for rate limiting
+        if not otp_service.can_resend_otp(otp_data):
+            raise ValidationException("rate_limited", "Please wait at least 1 minute before requesting a new OTP")
+
+        # Generate new OTP
+        new_otp = otp_service.create_password_reset_otp(email)
+        if not new_otp:
+            raise ValidationException("otp_generation_failed", "Failed to generate new OTP")
+
+        # Send new OTP email
+        if not email_service.send_password_reset_otp_email(email, new_otp):
+            # Clean up on email failure
+            otp_service.cleanup_password_reset_data(email)
+            raise ValidationException("email_send_failed", "Failed to send password reset email")
+
+        self._data = {'message': 'New password reset OTP sent to your email'}
+        return True
+
