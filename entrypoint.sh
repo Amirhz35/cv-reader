@@ -7,8 +7,7 @@ python manage.py wait_for_db
 # Only run migrations and create superuser from the main Django app service
 if [ "$CONTAINER_NAME" = "cv-screening-api" ]; then
     echo "Running database migrations..."
-    # Tables already exist, skip migrations
-    # python manage.py migrate --run-syncdb
+    python manage.py migrate --noinput
 
     # Create MinIO bucket
     echo "Creating MinIO bucket..."
