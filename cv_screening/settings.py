@@ -235,8 +235,9 @@ AWS_S3_OBJECT_PARAMETERS = {
 AWS_S3_USE_SSL = os.getenv('AWS_S3_USE_SSL', 'False').lower() == 'true'
 AWS_S3_ADDRESSING_STYLE = 'path'
 
-# OpenRouter AI API settings
-OPENROUTER_API_KEY = os.getenv('OPENROUTER_API_KEY')
+# NVIDIA AI API settings
+NVIDIA_API_KEY = os.getenv('NVIDIA_API_KEY')
+NVIDIA_MODEL = os.getenv('NVIDIA_MODEL', 'meta/llama-3.3-70b-instruct')
 
 # Celery settings
 CELERY_BROKER_URL = os.getenv('CELERY_BROKER_URL', 'redis://redis:6379/0')

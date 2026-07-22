@@ -6,7 +6,7 @@ A Django-based platform that evaluates CVs against job prompts using AI.
 
 - User authentication with JWT tokens
 - CV PDF upload and evaluation
-- AI-powered CV evaluation using OpenRouter
+- AI-powered CV evaluation using the NVIDIA API
 - Dual database setup (MySQL for auth, MongoDB for data)
 - Async processing with Celery
 - RESTful API with OpenAPI documentation
@@ -55,8 +55,8 @@ cv-reader/
 
 4. AI Configuration:
    ```bash
-   # Required: OpenRouter API key for AI evaluation
-   OPENROUTER_API_KEY=sk-or-v1-your-openrouter-api-key-here
+   # Required: NVIDIA API key for AI evaluation
+   NVIDIA_API_KEY=nvapi-your-nvidia-api-key-here
    ```
 
 4. Run migrations:
@@ -173,39 +173,40 @@ Configure connection strings in `.env` file.
 
 ### AI Integration
 
-The platform uses **OpenRouter** for production AI-powered CV evaluation. The system is designed to work with multiple AI models through OpenRouter's unified API:
+The platform uses the **NVIDIA API** (https://integrate.api.nvidia.com/v1) for production AI-powered CV evaluation, via the OpenAI-compatible SDK. The model is configurable through the `NVIDIA_MODEL` environment variable:
 
-- **qwen/qwen3-coder:free** (default) - Fast, cost-effective coding model
-- **anthropic/claude-3-haiku** - High-quality reasoning
-- **openai/gpt-4** - Advanced language understanding
-- **meta-llama/llama-3-70b-instruct** - Large language model
+- **meta/llama-3.3-70b-instruct** (default) - Reliable structured-output model
+- **nvidia/llama-3.3-nemotron-super-49b-v1** - NVIDIA Nemotron reasoning model
+- Any other chat model available on https://build.nvidia.com
 
 #### AI Evaluation Process
 
 1. **Text Extraction**: PDF content is extracted using PDFMiner/PyMuPDF
-2. **AI Analysis**: Extracted text is sent to OpenRouter with structured prompts
+2. **AI Analysis**: Extracted text is sent to the NVIDIA API with structured prompts
 3. **Structured Response**: AI returns JSON with score, rationale, matches, and gaps
 4. **Result Storage**: Evaluation results stored in MongoDB with status tracking
 
 #### Configuration
 
-The OpenRouter client automatically retrieves the API key from the `OPENROUTER_API_KEY` environment variable:
+The NVIDIA client automatically retrieves the API key from the `NVIDIA_API_KEY` environment variable:
 
 ```bash
 # Required environment variable
-export OPENROUTER_API_KEY=sk-or-v1-your-api-key-here
+export NVIDIA_API_KEY=nvapi-your-api-key-here
+# Optional: override the model
+export NVIDIA_MODEL=meta/llama-3.3-70b-instruct
 ```
 
 The client can also be initialized with an explicit API key:
 
 ```python
-from app.services.ai_client import OpenRouterClient
+from app.services.ai_client import NvidiaClient
 
 # Using environment variable (recommended)
-client = OpenRouterClient()
+client = NvidiaClient()
 
-# Using explicit API key
-client = OpenRouterClient(api_key="sk-or-v1-your-key")
+# Using explicit API key / model
+client = NvidiaClient(api_key="nvapi-your-key", model="meta/llama-3.3-70b-instruct")
 ```
 
 #### Circuit Breaker Protection

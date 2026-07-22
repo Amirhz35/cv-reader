@@ -4,43 +4,52 @@ import json
 import os
 from unittest.mock import Mock, patch, MagicMock
 from django.test import TestCase
-from app.services.ai_client import OpenRouterClient
+from app.services.ai_client import NvidiaClient, DEFAULT_NVIDIA_MODEL
 from app.services.cv_parser import CVParserService
 from app.services.evaluation_service import CVEvaluationService
-from app.services.circuit_breaker import CircuitBreaker, CircuitBreakerOpenException
+from app.services.circuit_breaker import (
+    CircuitBreaker,
+    CircuitBreakerOpenException,
+    CircuitBreakerState,
+    ai_circuit_breaker,
+)
 
 
-class OpenRouterClientTest(TestCase):
+def _mock_completion(content, total_tokens=150):
+    completion = Mock()
+    completion.choices = [Mock(message=Mock(content=content))]
+    completion.usage.model_dump.return_value = {'total_tokens': total_tokens}
+    return completion
+
+
+class NvidiaClientTest(TestCase):
     def setUp(self):
         self.api_key = "test-api-key"
         # Set environment variable for testing
-        os.environ['OPENROUTER_API_KEY'] = self.api_key
-        self.client = OpenRouterClient()
+        os.environ['NVIDIA_API_KEY'] = self.api_key
+        os.environ.pop('NVIDIA_MODEL', None)
+        # Reset shared circuit breaker state so failure tests don't leak
+        ai_circuit_breaker._state = CircuitBreakerState.CLOSED
+        ai_circuit_breaker._failure_count = 0
+        ai_circuit_breaker._success_count = 0
+        with patch('app.services.ai_client.OpenAI'):
+            self.client = NvidiaClient()
 
     def tearDown(self):
         # Clean up environment variable
-        if 'OPENROUTER_API_KEY' in os.environ:
-            del os.environ['OPENROUTER_API_KEY']
+        if 'NVIDIA_API_KEY' in os.environ:
+            del os.environ['NVIDIA_API_KEY']
 
-    @patch('app.services.ai_client.requests.post')
-    def test_evaluate_cv_success_json_response(self, mock_post):
+    def test_evaluate_cv_success_json_response(self):
         # Mock successful API response with JSON
-        mock_response = Mock()
-        mock_response.json.return_value = {
-            'choices': [{
-                'message': {
-                    'content': json.dumps({
-                        'score': 85.0,
-                        'rationale': 'Excellent match for the position',
-                        'matches': ['Python', 'Django'],
-                        'gaps': ['No cloud experience']
-                    })
-                }
-            }],
-            'usage': {'total_tokens': 150}
-        }
-        mock_response.raise_for_status.return_value = None
-        mock_post.return_value = mock_response
+        content = json.dumps({
+            'score': 85.0,
+            'rationale': 'Excellent match for the position',
+            'matches': ['Python', 'Django'],
+            'gaps': ['No cloud experience']
+        })
+        mock_create = self.client.client.chat.completions.create
+        mock_create.return_value = _mock_completion(content)
 
         result = self.client.evaluate_cv("Sample CV content", "Python developer position")
 
@@ -50,52 +59,42 @@ class OpenRouterClientTest(TestCase):
         self.assertEqual(result['gaps'], ['No cloud experience'])
 
         # Verify API call was made correctly
-        mock_post.assert_called_once()
-        call_args = mock_post.call_args
-        self.assertEqual(call_args[0][0], 'https://openrouter.ai/api/v1/chat/completions')
-        request_data = call_args[1]['json']
+        mock_create.assert_called_once()
+        call_kwargs = mock_create.call_args.kwargs
 
-        self.assertEqual(request_data['model'], 'qwen/qwen3-coder:free')
-        self.assertEqual(len(request_data['messages']), 2)
-        self.assertIn('system', request_data['messages'][0]['role'])
-        self.assertIn('user', request_data['messages'][1]['role'])
+        self.assertEqual(call_kwargs['model'], DEFAULT_NVIDIA_MODEL)
+        self.assertEqual(len(call_kwargs['messages']), 2)
+        self.assertEqual(call_kwargs['messages'][0]['role'], 'system')
+        self.assertEqual(call_kwargs['messages'][1]['role'], 'user')
 
-    @patch('app.services.ai_client.requests.post')
-    def test_evaluate_cv_non_json_response(self, mock_post):
-        # Mock API response with plain text (not JSON)
-        mock_response = Mock()
-        mock_response.json.return_value = {
-            'choices': [{
-                'message': {
-                    'content': 'This is a plain text response without JSON structure. The candidate has good skills.'
-                }
-            }]
-        }
-        mock_response.raise_for_status.return_value = None
-        mock_post.return_value = mock_response
+    def test_evaluate_cv_non_json_response(self):
+        # API response with plain text (not JSON) should raise
+        content = 'This is a plain text response without JSON structure. The candidate has good skills.'
+        self.client.client.chat.completions.create.return_value = _mock_completion(content)
 
-        result = self.client.evaluate_cv("Sample CV", "Developer position")
+        with self.assertRaises(Exception) as ctx:
+            self.client.evaluate_cv("Sample CV", "Developer position")
 
-        # Should create fallback structure
-        self.assertEqual(result['score'], 60.0)
-        self.assertIn('plain text response', result['rationale'])
-        self.assertEqual(result['gaps'], ['Unable to parse structured evaluation'])
+        self.assertIn('AI evaluation failed', str(ctx.exception))
 
-    @patch('app.services.ai_client.requests.post')
-    def test_evaluate_cv_api_timeout(self, mock_post):
-        # Mock timeout error
-        mock_post.side_effect = TimeoutError("Request timed out")
+    def test_evaluate_cv_api_error(self):
+        # API errors should surface as exceptions
+        self.client.client.chat.completions.create.side_effect = Exception("Request timed out")
 
-        result = self.client.evaluate_cv("Sample CV", "Developer position")
+        with self.assertRaises(Exception) as ctx:
+            self.client.evaluate_cv("Sample CV", "Developer position")
 
-        # Should return circuit breaker fallback
-        self.assertEqual(result['score'], 50.0)
-        self.assertIn('Service temporarily unavailable', result['rationale'])
-        self.assertIn('Circuit breaker open', result.get('error', ''))
+        self.assertIn('AI evaluation failed', str(ctx.exception))
+
+    def test_missing_api_key_raises(self):
+        del os.environ['NVIDIA_API_KEY']
+        with self.assertRaises(ValueError):
+            NvidiaClient()
 
     def test_extract_keywords(self):
         # Test the keyword extraction helper method
-        client = OpenRouterClient(api_key="test")
+        with patch('app.services.ai_client.OpenAI'):
+            client = NvidiaClient(api_key="test")
 
         text = "The candidate has experience in Python and JavaScript development."
         keywords = ['experience', 'python', 'javascript']

@@ -5,11 +5,14 @@ import time
 import json
 import os
 import re
-import requests
 from typing import Dict, Any, Optional
+from openai import OpenAI, APITimeoutError, APIError
 from .circuit_breaker import ai_circuit_breaker, CircuitBreakerOpenException
 
 logger = structlog.get_logger()
+
+DEFAULT_NVIDIA_MODEL = "meta/llama-3.3-70b-instruct"
+NVIDIA_BASE_URL = "https://integrate.api.nvidia.com/v1"
 
 
 class AIClient(ABC):
@@ -20,18 +23,23 @@ class AIClient(ABC):
 
 
 
-class OpenRouterClient(AIClient):
-    def __init__(self, api_key: Optional[str] = None, model: str = "google/gemini-2.5-flash-lite", base_url: str = "https://openrouter.ai/api/v1"):
-        self.api_key = api_key or os.getenv('OPENROUTER_API_KEY')
+class NvidiaClient(AIClient):
+    def __init__(self, api_key: Optional[str] = None, model: Optional[str] = None, base_url: str = NVIDIA_BASE_URL):
+        self.api_key = api_key or os.getenv('NVIDIA_API_KEY')
         if not self.api_key:
-            raise ValueError("OpenRouter API key not provided. Set OPENROUTER_API_KEY environment variable or pass api_key parameter.")
-        self.model = model
+            raise ValueError("NVIDIA API key not provided. Set NVIDIA_API_KEY environment variable or pass api_key parameter.")
+        self.model = model or os.getenv('NVIDIA_MODEL', DEFAULT_NVIDIA_MODEL)
         self.base_url = base_url
         self.timeout = 60  # 60 seconds timeout
+        self.client = OpenAI(
+            api_key=self.api_key,
+            base_url=self.base_url,
+            timeout=self.timeout,
+        )
 
     def evaluate_cv(self, cv_text: str, prompt: str) -> dict:
-        def _openrouter_evaluation():
-            logger.info("OpenRouter AI evaluation started",
+        def _nvidia_evaluation():
+            logger.info("NVIDIA AI evaluation started",
                        cv_text_length=len(cv_text),
                        prompt_length=len(prompt),
                        model=self.model)
@@ -58,51 +66,32 @@ CV Content:
 
 Please evaluate this CV against the job requirements."""
 
-                # Prepare the request payload
-                payload = {
-                    "model": self.model,
-                    "messages": [
+                # Make the API call
+                completion = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=[
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_message}
                     ],
-                    "temperature": 0.3,
-                    "max_tokens": 2000,
-                    "stream": False
-                }
-
-                headers = {
-                    "Authorization": f"Bearer {self.api_key}",
-                    "Content-Type": "application/json",
-                    "HTTP-Referer": "https://cv-screening-app.com",  # Optional
-                    "X-Title": "CV Screening API"  # Optional
-                }
-
-                # Make the API call
-                response = requests.post(
-                    f"{self.base_url}/chat/completions",
-                    json=payload,
-                    headers=headers,
-                    timeout=self.timeout
+                    temperature=0.3,
+                    max_tokens=2000,
+                    stream=False
                 )
 
-                response.raise_for_status()
-
-                result = response.json()
-
                 # Extract the AI response
-                ai_response = result['choices'][0]['message']['content'].strip()
+                ai_response = completion.choices[0].message.content.strip()
 
-                usage = result.get('usage') if 'usage' in result else None
-                logger.info("OpenRouter AI response received",
+                usage = completion.usage.model_dump() if completion.usage else None
+                logger.info("NVIDIA AI response received",
                            response_length=len(ai_response),
                            usage=usage)
 
                 # Try to parse the JSON response
                 parsed_response = self._parse_ai_response(ai_response)
-                
+
                 if not parsed_response:
                     raise Exception("AI returned invalid JSON response that could not be parsed")
-                
+
                 # Validate required fields - raise error if missing
                 if 'score' not in parsed_response:
                     raise Exception("AI response missing required 'score' field")
@@ -117,43 +106,43 @@ Please evaluate this CV against the job requirements."""
                 try:
                     score_value = parsed_response['score']
                     parsed_response['score'] = float(score_value)
-                    logger.info("Score extracted successfully", 
-                              original_score=score_value, 
+                    logger.info("Score extracted successfully",
+                              original_score=score_value,
                               parsed_score=parsed_response['score'])
                 except (ValueError, TypeError) as e:
                     raise Exception(f"AI response 'score' field is not a valid number: {score_value}")
 
-                logger.info("OpenRouter AI evaluation completed",
+                logger.info("NVIDIA AI evaluation completed",
                            score=parsed_response['score'],
                            matches_count=len(parsed_response['matches']),
                            gaps_count=len(parsed_response['gaps']))
                 return parsed_response
 
-            except requests.exceptions.Timeout:
-                logger.error("OpenRouter API request timed out")
+            except APITimeoutError:
+                logger.error("NVIDIA API request timed out")
                 raise Exception("AI service timeout")
 
-            except requests.exceptions.RequestException as e:
-                logger.error("OpenRouter API request failed", error=str(e))
+            except APIError as e:
+                logger.error("NVIDIA API request failed", error=str(e))
                 raise Exception(f"AI service error: {str(e)}")
 
             except Exception as e:
-                logger.error("Unexpected error in OpenRouter evaluation", error=str(e))
+                logger.error("Unexpected error in NVIDIA evaluation", error=str(e))
                 raise Exception(f"AI evaluation failed: {str(e)}")
 
         try:
-            return ai_circuit_breaker.call(_openrouter_evaluation)
+            return ai_circuit_breaker.call(_nvidia_evaluation)
         except CircuitBreakerOpenException:
-            logger.error("OpenRouter service circuit breaker is open")
+            logger.error("NVIDIA service circuit breaker is open")
             raise Exception("AI service temporarily unavailable - circuit breaker activated")
 
     def _parse_ai_response(self, ai_response: str) -> Optional[Dict[str, Any]]:
         """
         Parse AI response, handling markdown code blocks and nested JSON.
-        
+
         Args:
             ai_response: Raw AI response string
-            
+
         Returns:
             Parsed JSON dict or None if parsing fails
         """
@@ -161,7 +150,7 @@ Please evaluate this CV against the job requirements."""
         # Pattern: ```json\n{...}\n```
         json_block_pattern = r'```(?:json)?\s*\n(.*?)\n```'
         json_match = re.search(json_block_pattern, ai_response, re.DOTALL)
-        
+
         if json_match:
             json_str = json_match.group(1).strip()
         else:
@@ -173,11 +162,11 @@ Please evaluate this CV against the job requirements."""
                 json_str = json_match.group(0).strip()
             else:
                 json_str = ai_response.strip()
-        
+
         # Try to parse the JSON
         try:
             parsed = json.loads(json_str)
-            
+
             # Handle nested JSON in rationale field (if present)
             # Sometimes AI returns the actual evaluation JSON nested inside rationale
             if isinstance(parsed, dict) and 'rationale' in parsed:
@@ -207,7 +196,7 @@ Please evaluate this CV against the job requirements."""
                         except json.JSONDecodeError as e:
                             logger.warning(f"Failed to parse nested JSON in rationale: {e}")
                             pass
-            
+
             return parsed
         except json.JSONDecodeError as e:
             logger.warning(f"Failed to parse JSON response: {e}")
@@ -223,7 +212,7 @@ Please evaluate this CV against the job requirements."""
                     return json.loads(cleaned)
             except (json.JSONDecodeError, ValueError):
                 pass
-            
+
             return None
 
     def _extract_keywords(self, text: str, keywords: list) -> list:
@@ -234,4 +223,3 @@ Please evaluate this CV against the job requirements."""
             if keyword.lower() in text_lower:
                 found_keywords.append(keyword.capitalize())
         return found_keywords[:5]  # Limit to 5 keywords
-
