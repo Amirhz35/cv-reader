@@ -208,14 +208,16 @@ SIMPLE_JWT = {
 }
 
 # CORS settings
-CORS_ALLOWED_ORIGINS = [
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-    "http://ats-ui.liara.run",
-    "https://ats-ui.liara.run",
-    "http://www.ats-ui.liara.run",
-    "https://www.ats-ui.liara.run",
-]
+#CORS_ALLOWED_ORIGINS = [
+#    "http://localhost:3000",
+#    "http://127.0.0.1:3000",
+#    "http://ats-ui.liara.run",
+#    "https://ats-ui.liara.run",
+#    "http://www.ats-ui.liara.run",
+#    "https://www.ats-ui.liara.run",
+#]
+
+CORS_ALLOW_ALL_ORIGINS = True
 
 # File storage settings
 DEFAULT_FILE_STORAGE = os.getenv('DEFAULT_FILE_STORAGE', 'storages.backends.s3boto3.S3Boto3Storage')
