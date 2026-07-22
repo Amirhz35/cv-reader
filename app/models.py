@@ -70,6 +70,32 @@ class CVUpload(mongoengine.Document):
         return f"CV: {self.original_filename}"
 
 
+class AIFailureLog(mongoengine.Document):
+    ERROR_TYPES = ('timeout', 'circuit_breaker', 'api_error', 'parse_error', 'cv_extract_error', 'unknown')
+
+    evaluation_id = mongoengine.StringField()
+    user_id = mongoengine.StringField()
+    cv_id = mongoengine.StringField()
+    model = mongoengine.StringField()
+    error_type = mongoengine.StringField(choices=ERROR_TYPES, default='unknown')
+    error_message = mongoengine.StringField()
+    retry_count = mongoengine.IntField(default=0)
+    duration_ms = mongoengine.IntField()
+    created_at = mongoengine.DateTimeField(default=timezone.now)
+
+    meta = {
+        'collection': 'ai_failure_logs',
+        'indexes': [
+            '-created_at',
+            'evaluation_id',
+            'error_type'
+        ]
+    }
+
+    def __str__(self):
+        return f"AIFailureLog {self.error_type}: {self.error_message[:50] if self.error_message else ''}"
+
+
 class CVEvaluationRequest(mongoengine.Document):
     STATUS_PENDING = 0
     STATUS_PROCESSING = 1

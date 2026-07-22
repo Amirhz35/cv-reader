@@ -9,7 +9,7 @@ from .views import (
     OTPVerifyView, OTPResendView,
     ProfileGetView, ProfileUpdateView, ProfileDeleteView,
     PasswordChangeView, PasswordResetRequestView, PasswordResetVerifyView,
-    PasswordResetResendView
+    PasswordResetResendView, AILogView
 )
 
 app_name = 'app'
@@ -38,6 +38,9 @@ urlpatterns = [
 
     # Health check endpoint
     path('health/', HealthCheckView.as_view(), name='health-check'),
+
+    # AI failure logs endpoint
+    path('ai-logs/', AILogView.as_view(), name='ai-logs'),
 
     # Profile endpoints
     path('profile/', ProfileGetView.as_view(), name='profile-get'),
