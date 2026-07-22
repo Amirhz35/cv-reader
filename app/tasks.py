@@ -11,7 +11,7 @@ import requests
 from django.core.files.storage import default_storage
 from .models import CVEvaluationRequest, CVUpload
 from .services.evaluation_service import CVEvaluationService
-from .services.ai_client import OpenRouterClient  # AI client for CV evaluation
+from .services.ai_client import NvidiaClient  # AI client for CV evaluation
 
 logger = logging.getLogger(__name__)
 
@@ -52,8 +52,8 @@ def evaluate_cv_task(self, evaluation_id):
                 with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as temp_file:
                     temp_file.write(file_content)
                     temp_file_path = temp_file.name
-            # Initialize OpenRouter AI client
-            ai_client = OpenRouterClient(model="google/gemini-2.5-flash-lite")
+            # Initialize NVIDIA AI client (model comes from NVIDIA_MODEL env var or default)
+            ai_client = NvidiaClient()
             evaluation_service = CVEvaluationService(ai_client)
 
             result = evaluation_service.evaluate_cv(
