@@ -5,15 +5,49 @@ Celery tasks for CV screening platform.
 import logging
 import os
 import tempfile
+import time
 from bson import ObjectId
 from celery import shared_task
 import requests
 from django.core.files.storage import default_storage
-from .models import CVEvaluationRequest, CVUpload
+from .models import CVEvaluationRequest, CVUpload, AIFailureLog
 from .services.evaluation_service import CVEvaluationService
-from .services.ai_client import NvidiaClient  # AI client for CV evaluation
+from .services.ai_client import NvidiaClient, DEFAULT_NVIDIA_MODEL  # AI client for CV evaluation
 
 logger = logging.getLogger(__name__)
+
+
+def _categorize_ai_error(message):
+    """Map an error message to a short error_type for AIFailureLog."""
+    msg = (message or '').lower()
+    if 'timeout' in msg:
+        return 'timeout'
+    if 'circuit breaker' in msg:
+        return 'circuit_breaker'
+    if 'failed to extract text' in msg:
+        return 'cv_extract_error'
+    if 'json' in msg or 'missing required' in msg or 'not a valid number' in msg:
+        return 'parse_error'
+    if 'ai service error' in msg:
+        return 'api_error'
+    return 'unknown'
+
+
+def _log_ai_failure(evaluation_id, error, retry_count=0, duration_ms=None, user_id=None, cv_id=None):
+    """Persist an AI failure to MongoDB. Never raises - logging must not break the task."""
+    try:
+        AIFailureLog(
+            evaluation_id=str(evaluation_id) if evaluation_id else None,
+            user_id=str(user_id) if user_id else None,
+            cv_id=str(cv_id) if cv_id else None,
+            model=os.getenv('NVIDIA_MODEL', DEFAULT_NVIDIA_MODEL),
+            error_type=_categorize_ai_error(str(error)),
+            error_message=str(error)[:2000],
+            retry_count=retry_count,
+            duration_ms=duration_ms,
+        ).save()
+    except Exception as log_exc:
+        logger.error(f"Failed to save AIFailureLog for {evaluation_id}: {log_exc}")
 
 
 @shared_task(bind=True, max_retries=3)
@@ -24,6 +58,7 @@ def evaluate_cv_task(self, evaluation_id):
     Args:
         evaluation_id (str): ObjectId of the CVEvaluationRequest document
     """
+    task_started_at = time.monotonic()
     try:
         logger.info(f"Starting CV evaluation task for ID: {evaluation_id}")
 
@@ -95,6 +130,15 @@ def evaluate_cv_task(self, evaluation_id):
 
     except Exception as exc:
         logger.error(f"Error evaluating CV {evaluation_id}: {exc}")
+
+        _log_ai_failure(
+            evaluation_id=evaluation_id,
+            error=exc,
+            retry_count=self.request.retries,
+            duration_ms=int((time.monotonic() - task_started_at) * 1000),
+            user_id=getattr(locals().get('evaluation'), 'user_id', None),
+            cv_id=getattr(locals().get('evaluation'), 'cv_id', None),
+        )
 
         CVEvaluationRequest.objects(id=ObjectId(evaluation_id)).update_one(
             set__status=CVEvaluationRequest.STATUS_FAILED,

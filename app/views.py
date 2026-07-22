@@ -16,7 +16,7 @@ from .serializers import (
     PasswordChangeSerializer, PasswordResetRequestSerializer,
     PasswordResetVerifySerializer, PasswordResetResendSerializer
 )
-from .models import CustomUser, CVUpload, CVEvaluationRequest
+from .models import CustomUser, CVUpload, CVEvaluationRequest, AIFailureLog
 
 
 
@@ -661,3 +661,97 @@ class PasswordResetResendView(APIView):
         serializer.is_valid(raise_exception=True)
         serializer.save()
         return Response(data=serializer.data, status=status.HTTP_200_OK)
+
+
+class AILogView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        summary="Get AI Failure Logs",
+        description="Retrieve logs of failed AI evaluations, newest first. Useful for debugging why the AI service failed (timeouts, API errors, unparseable responses, etc.).",
+        parameters=[
+            OpenApiParameter(
+                name='error_type',
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.QUERY,
+                description='Filter by error type (timeout, circuit_breaker, api_error, parse_error, cv_extract_error, unknown)',
+                required=False
+            ),
+            OpenApiParameter(
+                name='evaluation_id',
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.QUERY,
+                description='Filter by evaluation request ID',
+                required=False
+            ),
+            OpenApiParameter(
+                name='limit',
+                type=OpenApiTypes.INT,
+                location=OpenApiParameter.QUERY,
+                description='Maximum number of logs to return (default 50, max 200)',
+                required=False
+            )
+        ],
+        responses={
+            200: OpenApiResponse(
+                description="AI failure logs retrieved successfully",
+                response={
+                    'type': 'object',
+                    'properties': {
+                        'code': {'type': 'string', 'example': 'success'},
+                        'count': {'type': 'integer', 'description': 'Number of logs returned'},
+                        'result': {
+                            'type': 'array',
+                            'items': {
+                                'type': 'object',
+                                'properties': {
+                                    'id': {'type': 'string', 'description': 'Log entry ID'},
+                                    'evaluation_id': {'type': 'string', 'nullable': True, 'description': 'Related evaluation request ID'},
+                                    'user_id': {'type': 'string', 'nullable': True, 'description': 'User who requested the evaluation'},
+                                    'cv_id': {'type': 'string', 'nullable': True, 'description': 'CV upload ID'},
+                                    'model': {'type': 'string', 'nullable': True, 'description': 'AI model that was used'},
+                                    'error_type': {'type': 'string', 'enum': ['timeout', 'circuit_breaker', 'api_error', 'parse_error', 'cv_extract_error', 'unknown'], 'description': 'Category of the failure'},
+                                    'error_message': {'type': 'string', 'nullable': True, 'description': 'Full error message'},
+                                    'retry_count': {'type': 'integer', 'description': 'Which retry attempt this failure happened on'},
+                                    'duration_ms': {'type': 'integer', 'nullable': True, 'description': 'How long the task ran before failing (milliseconds)'},
+                                    'created_at': {'type': 'string', 'format': 'date-time', 'description': 'When the failure happened'},
+                                }
+                            }
+                        }
+                    }
+                }
+            ),
+            401: OpenApiResponse(description="Unauthorized - authentication required")
+        }
+    )
+    def get(self, request):
+        query = {}
+        error_type = request.query_params.get('error_type')
+        if error_type:
+            query['error_type'] = error_type
+        evaluation_id = request.query_params.get('evaluation_id')
+        if evaluation_id:
+            query['evaluation_id'] = evaluation_id
+
+        try:
+            limit = int(request.query_params.get('limit', 50))
+        except ValueError:
+            limit = 50
+        limit = max(1, min(limit, 200))
+
+        logs = AIFailureLog.objects(**query).order_by('-created_at')[:limit]
+
+        result = [{
+            'id': str(log.id),
+            'evaluation_id': log.evaluation_id,
+            'user_id': log.user_id,
+            'cv_id': log.cv_id,
+            'model': log.model,
+            'error_type': log.error_type,
+            'error_message': log.error_message,
+            'retry_count': log.retry_count,
+            'duration_ms': log.duration_ms,
+            'created_at': log.created_at.isoformat() if log.created_at else None,
+        } for log in logs]
+
+        return Response(data={'code': 'success', 'count': len(result), 'result': result}, status=status.HTTP_200_OK)
